@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Any
 from datetime import datetime, timezone
+
 app = FastAPI()
 
 
@@ -38,8 +39,12 @@ class createFlightRequest(BaseModel):
 def http_exception_handler(req: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
-        content=create_response(req=req, status_code=exc.status_code,
-                                message=exc.detail, error=str(exc))
+        content=create_response(
+            req=req,
+            status_code=exc.status_code,
+            message=exc.detail,
+            error=str(exc.detail)
+        )
     )
 
 
@@ -52,42 +57,74 @@ flights_db = [
 
 
 @app.get("/flights")
-def get_flights(req: Request, status: Optional[str] = None):
+def get_flights(req: Request, statuss: Optional[str] = None):
     filtered_flights = flights_db
-    if status:
+
+    if statuss:
         filtered_flights = [
-            flight for flight in flights_db if flight["status"].lower() == status.lower()]
+            flight for flight in flights_db if flight["status"].lower() == statuss.lower()
+        ]
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content=create_response(req=req, status_code=status.HTTP_200_OK,
-                                    message="successfully", data=filtered_flights))
+            content=create_response(
+                req=req, status_code=200, message="successfully", data=filtered_flights)
+        )
+
     return JSONResponse(
         status_code=status.HTTP_200_OK,
-        content=create_response(req=req, status_code=status.HTTP_200_OK,
-                                message="successfully", data=flights_db))
+        content=create_response(req=req, status_code=200,
+                                message="successfully", data=flights_db)
+    )
 
 
 @app.post("/flights")
 def create_flight(req: Request, flight: createFlightRequest):
-    new_id = max([flight["id"] for flight in flights_db], default=1) + 1
+    new_id = max([f["id"] for f in flights_db], default=0) + 1
+
     flight_is_existing = next(
-        f for f in flights_db if f["flight_number"] == flight.flight_number)
+        (f for f in flights_db if f["flight_number"].upper(
+        ) == flight.flight_number.upper()), None
+    )
+
     if flight_is_existing:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Mã chuyến bay trùng")
-    new_flights = {"id": new_id, **flight.model_dump()}
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Mã chuyến bay trùng"
+        )
+
+    flight_data = flight.model_dump()
+    flight_data["created_at"] = flight_data["created_at"].isoformat()
+
+    new_flights = {"id": new_id, "status": "scheduled", **flight_data}
     flights_db.append(new_flights)
+
     return JSONResponse(
         status_code=status.HTTP_201_CREATED,
         content=create_response(
-            status_code=status.HTTP_201_CREATED,
+            req=req,
+            status_code=201,
             message="Flight được tạo thành công",
-            data=new_flights,
-            path=req.url.path
+            data=new_flights
         )
     )
 
 
 @app.delete("/flights/{flight_id}")
 def delete_flight(req: Request, flight_id: int):
-    pass
+    flight_to_delete = next(
+        (f for f in flights_db if f["id"] == flight_id), None)
+
+    if not flight_to_delete:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Chuyến bay với ID {flight_id} không tồn tại."
+        )
+    flights_db.remove(flight_to_delete)
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=create_response(
+            req=req,
+            status_code=200,
+            message="Xóa chuyến bay thành công",
+            data=flight_to_delete
+        )
+    )
